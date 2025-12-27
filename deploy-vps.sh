@@ -232,8 +232,8 @@ module.exports = {
     {
       name: 'tempmail-smtp',
       cwd: '$APP_DIR',
-      script: 'node',
-      args: 'server/smtp.js',
+      script: 'server/smtp.js',
+      exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
         MAIL_DOMAIN: '$MAIL_DOMAIN',
