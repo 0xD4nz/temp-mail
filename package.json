@@ -1,0 +1,40 @@
+{
+  "name": "temp-mail",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "smtp": "node server/smtp.js",
+    "smtp:local": "cross-env SMTP_PORT=2525 node server/smtp.js",
+    "send-test": "node scripts/send-test-email.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.5.0",
+    "dotenv": "^17.2.3",
+    "lucide-react": "^0.562.0",
+    "mailparser": "^3.9.1",
+    "next": "16.1.1",
+    "qrcode": "^1.5.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "smtp-server": "^3.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^20",
+    "@types/qrcode": "^1.5.6",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/smtp-server": "^3.5.12",
+    "babel-plugin-react-compiler": "1.0.0",
+    "cross-env": "^10.1.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5"
+  }
+}
