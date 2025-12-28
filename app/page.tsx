@@ -179,7 +179,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(3600);
+  const [timeLeft, setTimeLeft] = useState(0);
   const [qrCode, setQrCode] = useState<string>('');
   const [canExtend, setCanExtend] = useState(true);
 
@@ -568,8 +568,8 @@ export default function Home() {
       fetchQRCode(validInboxes[0].address);
       localStorage.setItem('tempmail_inboxes', JSON.stringify(validInboxes));
     } else {
-      // Show new inbox modal instead of auto-generating
-      setShowNewInboxModal(true);
+      // No saved inboxes - show welcome state (user clicks + to create)
+      // Intentionally do nothing - let user initiate inbox creation
     }
   }, []);
 
@@ -645,10 +645,17 @@ export default function Home() {
             <span className="logoText">TempMail</span>
           </div>
           <div className="headerActions">
-            <div className={`timer ${timeLeft < 300 ? 'expiring' : ''}`}>
-              <Clock />
-              <span>{formatTimeLeft()}</span>
-            </div>
+            {activeInbox ? (
+              <div className={`timer ${timeLeft < 300 ? 'expiring' : ''}`}>
+                <Clock />
+                <span>{formatTimeLeft()}</span>
+              </div>
+            ) : (
+              <div className="timer">
+                <Clock />
+                <span>No inbox</span>
+              </div>
+            )}
             <button
               className="btn btnIcon btnSecondary"
               onClick={toggleNotifications}
@@ -758,7 +765,7 @@ export default function Home() {
           <div className="emailDisplayWrapper">
             <div className="emailDisplayMain">
               <div className="emailDisplay">
-                <span className="emailAddress">{activeInbox || 'Generating...'}</span>
+                <span className="emailAddress">{activeInbox || 'Click + to create your first inbox'}</span>
               </div>
 
               <div className="emailActions">
@@ -772,10 +779,10 @@ export default function Home() {
                 </button>
                 <button
                   className="btn btnPrimary"
-                  onClick={() => generateEmail()}
+                  onClick={() => setShowNewInboxModal(true)}
                   disabled={loading}
                 >
-                  <RefreshCw className={loading ? 'refreshing' : ''} />
+                  <Plus />
                   New Email
                 </button>
                 <button
