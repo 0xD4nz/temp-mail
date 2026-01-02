@@ -4,7 +4,7 @@ const SMTP_PORT = 2525;
 const SMTP_HOST = 'localhost';
 
 const args = process.argv.slice(2);
-const TO_EMAIL = args[0] || 'test@tempmail.local';
+const TO_EMAIL = args[0] || 'admin@tempmail.local';
 
 console.log(`Sending test email to: ${TO_EMAIL}`);
 console.log(`Connecting to ${SMTP_HOST}:${SMTP_PORT}...`);
