@@ -269,7 +269,7 @@ echo ""
 read -p "Do you want to setup SSL now? (y/n): " SETUP_SSL
 
 if [ "$SETUP_SSL" = "y" ] || [ "$SETUP_SSL" = "Y" ]; then
-    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --non-interactive --agree-tos -m $ADMIN_EMAIL || print_warning "SSL setup failed - you can run 'sudo certbot --nginx' manually later"
+    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --expand --non-interactive --agree-tos -m $ADMIN_EMAIL || print_warning "SSL setup failed - you can run 'sudo certbot --nginx' manually later"
 else
     print_warning "Skipping SSL setup. Run 'sudo certbot --nginx' later to enable HTTPS"
 fi
