@@ -65,8 +65,8 @@ read -p "Press Enter to continue or Ctrl+C to cancel..."
 # Step 1: Update System
 echo ""
 echo "📦 Step 1: Updating system packages..."
-sudo apt update && sudo apt upgrade -y
-print_status "System updated"
+sudo apt update && sudo apt upgrade -y || print_warning "System upgrade had errors - continuing anyway (check manually with 'sudo apt upgrade')"
+print_status "System update step done"
 
 # Step 2: Install Node.js 20 LTS
 echo ""
@@ -255,10 +255,13 @@ fi
 echo ""
 echo "🚀 Step 13: Starting applications..."
 cd $APP_DIR
-pm2 delete all 2>/dev/null || true
+pm2 delete tempmail-web 2>/dev/null || true
+pm2 delete tempmail-smtp 2>/dev/null || true
 pm2 start ecosystem.config.js
 pm2 save
-sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp /home/$USER 2>/dev/null || true
+# NOTE: --hp must point at the real home dir ($HOME), not /home/$USER,
+# otherwise PM2_HOME in the systemd unit won't match and resurrect fails on reboot
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp $HOME 2>/dev/null || true
 print_status "Applications started"
 
 # Step 14: Get SSL Certificate (optional)
