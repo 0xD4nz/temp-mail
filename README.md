@@ -156,10 +156,15 @@ pm2 startup
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `MAIL_DOMAIN` | Primary email domain | tempmail.local |
-| `MAIL_DOMAINS` | Multiple domains (comma-separated) | - |
+| `MAIL_DOMAINS` | Recipient domains the SMTP server accepts (comma-separated). Mail to other domains is rejected with 550 | value of `MAIL_DOMAIN` |
 | `NEXT_PUBLIC_MAIL_DOMAIN` | Frontend display domain | tempmail.local |
 | `SMTP_PORT` | SMTP server port | 25 |
-| `HTTP_PORT` | SMTP API port | 3001 |
+| `HTTP_PORT` | SMTP health API port | 3001 |
+| `MAX_MESSAGE_SIZE` | Max inbound email size in bytes (SMTP) | 10485760 (10 MB) |
+| `MAX_POST_BODY` | Max `/api/emails` POST body in bytes | 12582912 (12 MB) |
+| `NEXTJS_API` | Base URL the SMTP server syncs received mail to | http://localhost:3000 |
+| `DB_PATH` | SQLite database path (must match for both processes) | `<cwd>/data/tempmail.db` |
+| `INTERNAL_API_SECRET` | Shared secret: SMTP server sends it as `x-internal-secret`, `/api/emails` POST requires it. **Set the same value for both processes** — without it anyone can forge emails into any inbox | (unset = unauthenticated, warns in logs) |
 
 ### Nginx Configuration
 
@@ -201,8 +206,9 @@ sudo certbot --nginx -d yourdomain.com
 ## 🔒 Security Considerations
 
 - This is a **temporary email service** - do not use for sensitive data
-- Emails are stored in memory and lost on restart
-- For persistent storage, consider adding a database
+- Emails are stored in SQLite (`data/tempmail.db`, git-ignored) and survive restarts
+- Set `INTERNAL_API_SECRET` to the same random value for both the web and SMTP processes, otherwise anyone can POST forged emails into any inbox
+- The SMTP server only accepts recipients at `MAIL_DOMAINS` and discards messages over `MAX_MESSAGE_SIZE`
 - Configure firewall to only allow necessary ports
 - Consider adding rate limiting for production use
 

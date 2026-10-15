@@ -18,6 +18,7 @@ export {
 
     // Inbox functions
     registerAddress,
+    tryRegisterAddress,
     getInbox,
     isAddressActive,
     getAllInboxes,

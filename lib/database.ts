@@ -128,10 +128,23 @@ export function registerAddress(address: string, isCustom: boolean = false, doma
     const emailDomain = domain || address.split('@')[1] || AVAILABLE_DOMAINS[0];
     const lowerAddress = address.toLowerCase();
 
+    // Never clobber an active inbox (e.g. random-name collision or concurrent
+    // registration). Expired rows are revived with fresh timers instead.
+    const existing = getInbox(lowerAddress);
+    if (existing && existing.expiresAt > now) {
+        return existing;
+    }
+
     const stmt = db.prepare(`
-        INSERT OR REPLACE INTO inboxes 
+        INSERT INTO inboxes
         (address, created_at, expires_at, max_expires_at, is_custom, domain)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(address) DO UPDATE SET
+            created_at = excluded.created_at,
+            expires_at = excluded.expires_at,
+            max_expires_at = excluded.max_expires_at,
+            is_custom = inboxes.is_custom OR excluded.is_custom,
+            domain = excluded.domain
     `);
 
     stmt.run(
@@ -142,6 +155,50 @@ export function registerAddress(address: string, isCustom: boolean = false, doma
         isCustom ? 1 : 0,
         emailDomain
     );
+
+    const mergedCustom = existing ? (existing.isCustom || isCustom) : isCustom;
+
+    return {
+        address: lowerAddress,
+        createdAt: now,
+        expiresAt: now + initialExpiry,
+        maxExpiresAt: now + maxExpiry,
+        isCustom: mergedCustom,
+        domain: emailDomain
+    };
+}
+
+// Atomic "create only if the address is completely free" registration.
+// Returns null when the address is already taken (active or expired row),
+// which makes custom-username races impossible to win silently.
+export function tryRegisterAddress(address: string, isCustom: boolean = false, domain?: string): Inbox | null {
+    const now = Date.now();
+    const initialExpiry = 60 * 60 * 1000; // 1 hour
+    const maxExpiry = 2 * 60 * 60 * 1000; // 2 hours max
+
+    const emailDomain = domain || address.split('@')[1] || AVAILABLE_DOMAINS[0];
+    const lowerAddress = address.toLowerCase();
+
+    try {
+        db.prepare(`
+            INSERT INTO inboxes
+            (address, created_at, expires_at, max_expires_at, is_custom, domain)
+            VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+            lowerAddress,
+            now,
+            now + initialExpiry,
+            now + maxExpiry,
+            isCustom ? 1 : 0,
+            emailDomain
+        );
+    } catch (err: unknown) {
+        const code = (err as { code?: unknown } | null)?.code;
+        if (typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')) {
+            return null;
+        }
+        throw err;
+    }
 
     return {
         address: lowerAddress,
@@ -236,10 +293,13 @@ export function deleteInbox(address: string): boolean {
 
 export function addEmail(email: Email): void {
     const stmt = db.prepare(`
-        INSERT OR IGNORE INTO emails (id, inbox_address, from_address, subject, text_content, 
+        INSERT OR IGNORE INTO emails (id, inbox_address, from_address, subject, text_content,
                            html_content, date, read, deleted, attachments)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
+
+    const parsedTime = new Date(email.date).getTime();
+    const safeTime = Number.isNaN(parsedTime) ? Date.now() : parsedTime;
 
     stmt.run(
         email.id,
@@ -248,7 +308,7 @@ export function addEmail(email: Email): void {
         email.subject,
         email.text,
         email.html,
-        new Date(email.date).getTime(),
+        safeTime,
         email.read ? 1 : 0,
         email.deleted ? 1 : 0,
         JSON.stringify(email.attachments || [])
@@ -350,14 +410,16 @@ export function permanentlyDeleteEmail(address: string, emailId: string): boolea
 }
 
 export function searchEmails(address: string, query: string): Email[] {
-    const searchPattern = `%${query}%`;
+    // Escape LIKE wildcards so a literal % or _ in the query can't act as one
+    const escaped = query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    const searchPattern = `%${escaped}%`;
     const stmt = db.prepare(`
         SELECT id, inbox_address as "to", from_address as "from", subject,
                text_content as text, html_content as html, date, read, deleted,
                attachments
-        FROM emails 
+        FROM emails
         WHERE inbox_address = ? AND deleted = 0
-          AND (subject LIKE ? OR from_address LIKE ? OR text_content LIKE ?)
+          AND (subject LIKE ? ESCAPE '\\' OR from_address LIKE ? ESCAPE '\\' OR text_content LIKE ? ESCAPE '\\')
         ORDER BY date DESC
     `);
 
@@ -386,9 +448,11 @@ export function getGlobalStats(): GlobalStats {
 
 export function getInboxStats(address: string) {
     const stats = db.prepare(`
-        SELECT 
+        SELECT
             COUNT(*) as totalReceived,
             SUM(CASE WHEN read = 1 THEN 1 ELSE 0 END) as totalRead,
+            SUM(CASE WHEN read = 0 AND deleted = 0 THEN 1 ELSE 0 END) as unread,
+            SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END) as inTrash,
             SUM(CASE WHEN deleted = 1 THEN 1 ELSE 0 END) as totalDeleted
         FROM emails WHERE inbox_address = ?
     `).get(address.toLowerCase()) as any;
@@ -396,6 +460,8 @@ export function getInboxStats(address: string) {
     return {
         totalReceived: stats?.totalReceived || 0,
         totalRead: stats?.totalRead || 0,
+        unread: stats?.unread || 0,
+        inTrash: stats?.inTrash || 0,
         totalDeleted: stats?.totalDeleted || 0
     };
 }

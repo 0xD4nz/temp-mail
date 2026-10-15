@@ -15,6 +15,14 @@ export async function GET(request: NextRequest) {
             );
         }
 
+        // Bound input length (max realistic email length is 254; be generous)
+        if (email.length > 320) {
+            return NextResponse.json(
+                { success: false, error: 'Email address too long' },
+                { status: 400 }
+            );
+        }
+
         // Generate QR code content (mailto link)
         const content = `mailto:${email}`;
 

@@ -16,9 +16,39 @@ import {
     Email
 } from '@/lib/emailStore';
 
+// Shared secret with the SMTP server (server/smtp.js sends it as x-internal-secret).
+// When set, unauthenticated callers cannot forge emails into inboxes.
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+if (!INTERNAL_API_SECRET) {
+    console.warn('[api/emails] INTERNAL_API_SECRET is not set - POST accepts unauthenticated requests');
+}
+
+// Max accepted POST body (SMTP caps messages at MAX_MESSAGE_SIZE, default 10 MB)
+const MAX_POST_BODY = parseInt(process.env.MAX_POST_BODY || String(12 * 1024 * 1024), 10);
+
 // POST /api/emails - Receive email from SMTP server
 export async function POST(request: NextRequest) {
     try {
+        // Reject oversized bodies before parsing
+        const contentLength = Number(request.headers.get('content-length') || 0);
+        if (contentLength > MAX_POST_BODY) {
+            return NextResponse.json(
+                { success: false, error: 'Payload too large' },
+                { status: 413 }
+            );
+        }
+
+        // Authenticate the SMTP sync when a secret is configured
+        if (INTERNAL_API_SECRET) {
+            const provided = request.headers.get('x-internal-secret') || '';
+            if (provided !== INTERNAL_API_SECRET) {
+                return NextResponse.json(
+                    { success: false, error: 'Forbidden' },
+                    { status: 403 }
+                );
+            }
+        }
+
         const body = await request.json();
 
         const { id, to, from, subject, text, html, date, attachments } = body;
@@ -35,15 +65,18 @@ export async function POST(request: NextRequest) {
             registerAddress(to, false);
         }
 
+        const parsedDate = new Date(date);
+        const safeDate = Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate;
+
         // Create email object
         const email: Email = {
-            id: id || `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            id: id || `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
             to: to.toLowerCase(),
             from,
             subject: subject || '(No subject)',
             text: text || '',
             html: html || '',
-            date: new Date(date || Date.now()),
+            date: safeDate,
             read: false,
             deleted: false,
             attachments: attachments || []

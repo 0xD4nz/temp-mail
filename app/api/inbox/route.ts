@@ -1,22 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getInbox, extendInbox, getAllInboxes, deleteInbox } from '@/lib/emailStore';
+import { getInbox, extendInbox, deleteInbox } from '@/lib/emailStore';
 
 // GET /api/inbox?address=xxx - Get inbox info
-// GET /api/inbox?all=true - Get all inboxes
+// NOTE: the old ?all=true endpoint was removed - it exposed every active
+// inbox address to anyone on the internet with no authentication.
 export async function GET(request: NextRequest) {
     try {
         const { searchParams } = new URL(request.url);
         const address = searchParams.get('address');
-        const all = searchParams.get('all') === 'true';
-
-        if (all) {
-            const inboxes = getAllInboxes();
-            return NextResponse.json({
-                success: true,
-                inboxes,
-                count: inboxes.length,
-            });
-        }
 
         if (!address) {
             return NextResponse.json(

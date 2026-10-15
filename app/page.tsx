@@ -215,6 +215,13 @@ export default function Home() {
 
   // Refs
   const prevEmailCount = useRef(0);
+  const inboxesRef = useRef<Inbox[]>([]);
+
+  // Keep a ref in sync so interval callbacks always see the latest inboxes
+  // without re-creating the interval (avoids stale closures)
+  useEffect(() => {
+    inboxesRef.current = inboxes;
+  }, [inboxes]);
 
   // Show toast notification
   const showToast = useCallback((type: Toast['type'], title: string, message?: string) => {
@@ -464,7 +471,7 @@ export default function Home() {
     }
   };
 
-  // Extend inbox (max 1 hour total)
+  // Extend inbox (max 2 hours total from creation)
   const handleExtendInbox = async () => {
     try {
       const res = await fetch(`/api/inbox?address=${encodeURIComponent(activeInbox)}&action=extend`, {
@@ -582,34 +589,35 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [activeInbox, fetchEmails]);
 
-  // Timer countdown
+  // Timer countdown - pure updater, no side effects inside setState
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          // Remove expired inbox
-          setInboxes(current => {
-            const remaining = current.filter(i => i.address !== activeInbox);
-            localStorage.setItem('tempmail_inboxes', JSON.stringify(remaining));
-            return remaining;
-          });
-          const validInboxes = inboxes.filter(i => i.address !== activeInbox && i.expiresAt > Date.now());
+    if (!activeInbox) return;
 
-          if (validInboxes.length > 0) {
-            setActiveInbox(validInboxes[0].address);
-            return Math.floor((validInboxes[0].expiresAt - Date.now()) / 1000);
-          } else {
-            // Show new inbox modal instead of auto-generating
-            setActiveInbox('');
-            setShowNewInboxModal(true);
-            return 0;
-          }
-        }
-        return prev - 1;
-      });
+    const interval = setInterval(() => {
+      setTimeLeft(prev => Math.max(0, prev - 1));
     }, 1000);
     return () => clearInterval(interval);
-  }, [activeInbox, inboxes]);
+  }, [activeInbox]);
+
+  // Handle inbox expiry (runs when the countdown hits zero)
+  useEffect(() => {
+    if (timeLeft > 0 || !activeInbox) return;
+
+    const current = inboxesRef.current;
+    const remaining = current.filter(i => i.address !== activeInbox);
+    localStorage.setItem('tempmail_inboxes', JSON.stringify(remaining));
+    setInboxes(remaining);
+
+    const validInboxes = remaining.filter(i => i.expiresAt > Date.now());
+    if (validInboxes.length > 0) {
+      setActiveInbox(validInboxes[0].address);
+      setTimeLeft(Math.max(0, Math.floor((validInboxes[0].expiresAt - Date.now()) / 1000)));
+    } else {
+      // Show new inbox modal instead of auto-generating
+      setActiveInbox('');
+      setShowNewInboxModal(true);
+    }
+  }, [timeLeft, activeInbox]);
 
   // Format time left
   const formatTimeLeft = () => {
@@ -789,7 +797,7 @@ export default function Home() {
                   className={`btn ${canExtend ? 'btnSecondary' : 'btnWarning'}`}
                   onClick={handleExtendInbox}
                   disabled={!canExtend}
-                  title={canExtend ? 'Extend by 1 hour (max 1 hour total)' : 'Maximum extension reached'}
+                  title={canExtend ? 'Extend by 1 hour (max 2 hours total)' : 'Maximum extension reached'}
                 >
                   <Timer />
                   {canExtend ? 'Extend' : 'Max Reached'}

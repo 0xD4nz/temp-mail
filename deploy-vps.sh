@@ -132,86 +132,31 @@ print_status "Dependencies installed"
 # Step 8: Create environment file
 echo ""
 echo "⚙️ Step 8: Creating environment configuration..."
+# Shared secret so only the SMTP server can POST to /api/emails (prevents forged emails)
+INTERNAL_API_SECRET=$(openssl rand -hex 32)
 cat > $APP_DIR/.env.local << EOF
 # TempMail Configuration
 MAIL_DOMAIN=$MAIL_DOMAIN
+MAIL_DOMAINS=$MAIL_DOMAIN,mail.$MAIL_DOMAIN,inbox.$MAIL_DOMAIN,temp.$MAIL_DOMAIN,box.$MAIL_DOMAIN
 SMTP_PORT=25
 HTTP_PORT=3001
+MAX_MESSAGE_SIZE=10485760
 NODE_ENV=production
 NEXT_PUBLIC_MAIL_DOMAIN=$MAIL_DOMAIN
+INTERNAL_API_SECRET=$INTERNAL_API_SECRET
 EOF
 print_status "Environment file created"
+print_warning "INTERNAL_API_SECRET generated and saved to .env.local (also injected into PM2 below)"
 
-# Step 9: Update available domains in emailStore
-echo ""
-echo "⚙️ Updating available domains..."
-cat > $APP_DIR/lib/emailStore.ts.tmp << EOF
-// Enhanced In-memory email storage with all features
-export interface Attachment {
-    filename: string;
-    contentType: string;
-    size: number;
-    content: string; // base64 encoded
-}
-
-export interface Email {
-    id: string;
-    to: string;
-    from: string;
-    subject: string;
-    text: string;
-    html: string;
-    date: Date;
-    read: boolean;
-    deleted: boolean;
-    deletedAt?: Date;
-    attachments: Attachment[];
-}
-
-export interface Inbox {
-    address: string;
-    createdAt: number;
-    expiresAt: number;
-    maxExpiresAt: number;
-    isCustom: boolean;
-    forwardTo?: string;
-    domain: string;
-    stats: {
-        totalReceived: number;
-        totalRead: number;
-        totalDeleted: number;
-    };
-}
-
-// Available domains - configured for $MAIL_DOMAIN
-export const AVAILABLE_DOMAINS = [
-    '$MAIL_DOMAIN',
-    'mail.$MAIL_DOMAIN',
-    'inbox.$MAIL_DOMAIN',
-    'temp.$MAIL_DOMAIN',
-    'box.$MAIL_DOMAIN'
-];
-
-export function getAvailableDomains(): string[] {
-    return [...AVAILABLE_DOMAINS];
-}
-EOF
-
-# Keep the rest of the file (functions)
-tail -n +50 $APP_DIR/lib/emailStore.ts >> $APP_DIR/lib/emailStore.ts.tmp
-mv $APP_DIR/lib/emailStore.ts.tmp $APP_DIR/lib/emailStore.ts
-
-print_status "Domains updated to $MAIL_DOMAIN"
-
-# Step 10: Build application
+# Step 9: Build application
 echo ""
 echo "🔨 Building application..."
 npm run build
 print_status "Application built"
 
-# Step 11: Configure PM2
+# Step 10: Configure PM2
 echo ""
-echo "🔧 Step 11: Configuring PM2..."
+echo "🔧 Step 10: Configuring PM2..."
 cat > $APP_DIR/ecosystem.config.js << EOF
 module.exports = {
   apps: [
@@ -222,7 +167,11 @@ module.exports = {
       args: 'start',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000
+        PORT: 3000,
+        MAIL_DOMAIN: '$MAIL_DOMAIN',
+        MAIL_DOMAINS: '$MAIL_DOMAIN,mail.$MAIL_DOMAIN,inbox.$MAIL_DOMAIN,temp.$MAIL_DOMAIN,box.$MAIL_DOMAIN',
+        NEXT_PUBLIC_MAIL_DOMAIN: '$MAIL_DOMAIN',
+        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET'
       },
       instances: 1,
       autorestart: true,
@@ -237,8 +186,11 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         MAIL_DOMAIN: '$MAIL_DOMAIN',
+        MAIL_DOMAINS: '$MAIL_DOMAIN,mail.$MAIL_DOMAIN,inbox.$MAIL_DOMAIN,temp.$MAIL_DOMAIN,box.$MAIL_DOMAIN',
         SMTP_PORT: '25',
-        HTTP_PORT: '3001'
+        HTTP_PORT: '3001',
+        MAX_MESSAGE_SIZE: '10485760',
+        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET'
       },
       instances: 1,
       autorestart: true,
@@ -250,9 +202,9 @@ module.exports = {
 EOF
 print_status "PM2 configuration created"
 
-# Step 12: Configure Nginx (HTTP only first, then add SSL)
+# Step 11: Configure Nginx (HTTP only first, then add SSL)
 echo ""
-echo "🌐 Step 12: Configuring Nginx..."
+echo "🌐 Step 11: Configuring Nginx..."
 sudo tee /etc/nginx/sites-available/tempmail > /dev/null << EOF
 server {
     listen 80;
@@ -280,9 +232,9 @@ sudo nginx -t
 sudo systemctl reload nginx
 print_status "Nginx configured"
 
-# Step 13: Configure Firewall
+# Step 12: Configure Firewall
 echo ""
-echo "🔥 Step 13: Configuring firewall..."
+echo "🔥 Step 12: Configuring firewall..."
 sudo ufw allow 22/tcp    # SSH
 sudo ufw allow 80/tcp    # HTTP
 sudo ufw allow 443/tcp   # HTTPS
@@ -291,9 +243,9 @@ sudo ufw allow 587/tcp   # SMTP Submission
 sudo ufw --force enable
 print_status "Firewall configured"
 
-# Step 14: Start applications with PM2
+# Step 13: Start applications with PM2
 echo ""
-echo "🚀 Step 14: Starting applications..."
+echo "🚀 Step 13: Starting applications..."
 cd $APP_DIR
 pm2 delete all 2>/dev/null || true
 pm2 start ecosystem.config.js
@@ -301,9 +253,9 @@ pm2 save
 sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u $USER --hp /home/$USER 2>/dev/null || true
 print_status "Applications started"
 
-# Step 15: Get SSL Certificate (optional)
+# Step 14: Get SSL Certificate (optional)
 echo ""
-echo "🔒 Step 15: SSL Certificate Setup"
+echo "🔒 Step 14: SSL Certificate Setup"
 print_warning "Make sure your domain DNS A record is pointing to this server!"
 echo ""
 read -p "Do you want to setup SSL now? (y/n): " SETUP_SSL

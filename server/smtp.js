@@ -7,6 +7,7 @@ require('dotenv').config({ path: '.env.local' });
 const { SMTPServer } = require('smtp-server');
 const { simpleParser } = require('mailparser');
 const http = require('http');
+const https = require('https');
 const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
@@ -15,6 +16,23 @@ const SMTP_PORT = parseInt(process.env.SMTP_PORT || '25');
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '3001');
 const MAIL_DOMAIN = process.env.MAIL_DOMAIN || process.env.NEXT_PUBLIC_MAIL_DOMAIN || 'tempmail.local';
 const NEXTJS_API = process.env.NEXTJS_API || 'http://localhost:3000';
+
+// Max inbound message size (default 10 MB) - prevents memory exhaustion DoS
+const MAX_MESSAGE_SIZE = parseInt(process.env.MAX_MESSAGE_SIZE || String(10 * 1024 * 1024), 10);
+
+// Domains this server accepts mail for - anything else is rejected with 550.
+// Comma-separated list; falls back to MAIL_DOMAIN for backward compatibility.
+const ALLOWED_DOMAINS = (process.env.MAIL_DOMAINS || MAIL_DOMAIN)
+    .split(',')
+    .map(d => d.trim().toLowerCase())
+    .filter(d => d.length > 0);
+
+// Shared secret for the SMTP -> Next.js sync endpoint (/api/emails POST).
+// When set, the Next.js route requires the matching x-internal-secret header.
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET || '';
+if (!INTERNAL_API_SECRET) {
+    console.log('⚠ INTERNAL_API_SECRET not set - /api/emails sync endpoint accepts unauthenticated posts');
+}
 
 // Database setup
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'tempmail.db');
@@ -77,7 +95,7 @@ db.exec(`
 `);
 
 function generateId() {
-    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
 // Store email to database
@@ -124,20 +142,26 @@ async function sendToNextJS(email) {
     try {
         const postData = JSON.stringify(email);
         const url = new URL('/api/emails', NEXTJS_API);
+        const httpMod = url.protocol === 'https:' ? https : http;
+
+        const headers = {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData)
+        };
+        if (INTERNAL_API_SECRET) {
+            headers['x-internal-secret'] = INTERNAL_API_SECRET;
+        }
 
         const options = {
             hostname: url.hostname,
-            port: url.port || 3000,
+            port: url.port || (url.protocol === 'https:' ? 443 : 80),
             path: '/api/emails',
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(postData)
-            }
+            headers
         };
 
         return new Promise((resolve, reject) => {
-            const req = http.request(options, (res) => {
+            const req = httpMod.request(options, (res) => {
                 let data = '';
                 res.on('data', chunk => data += chunk);
                 res.on('end', () => {
@@ -148,6 +172,12 @@ async function sendToNextJS(email) {
 
             req.on('error', (err) => {
                 console.log(`   ⚠ Next.js sync skipped: ${err.message}`);
+                resolve(null);
+            });
+
+            req.setTimeout(10000, () => {
+                console.log('   ⚠ Next.js sync timed out');
+                req.destroy();
                 resolve(null);
             });
 
@@ -165,58 +195,85 @@ const smtp = new SMTPServer({
     ...sslOptions,
     authOptional: true,
     disabledCommands: ['AUTH'],
+    // Advertise max message size to well-behaved clients (see manual enforcement below)
+    size: MAX_MESSAGE_SIZE,
     onData(stream, session, callback) {
         let emailData = '';
+        let receivedBytes = 0;
+        let oversized = false;
 
         stream.on('data', (chunk) => {
+            receivedBytes += chunk.length;
+            if (receivedBytes > MAX_MESSAGE_SIZE) {
+                // Stop accumulating - discard the rest to protect memory
+                oversized = true;
+                return;
+            }
             emailData += chunk.toString();
         });
 
         stream.on('end', async () => {
+            if (oversized) {
+                console.log(`   ⚠ Message too large (${receivedBytes} bytes > ${MAX_MESSAGE_SIZE}), discarded`);
+                callback();
+                return;
+            }
+
             try {
                 const parsed = await simpleParser(emailData);
 
-                // Get recipient address
-                const to = session.envelope.rcptTo[0]?.address?.toLowerCase();
+                // Deliver to every envelope recipient, not just the first one
+                const recipients = (session.envelope.rcptTo || [])
+                    .map(r => r.address?.toLowerCase())
+                    .filter(Boolean);
 
-                if (!to) {
+                if (recipients.length === 0) {
                     console.log('No recipient found');
                     callback();
                     return;
                 }
 
-                console.log(`📧 Email received for: ${to}`);
-                console.log(`   From: ${parsed.from?.text}`);
-                console.log(`   Subject: ${parsed.subject}`);
+                // Prefer the Date header; fall back to receive time
+                const parsedDate = parsed.date instanceof Date && !isNaN(parsed.date.getTime())
+                    ? parsed.date
+                    : new Date();
 
-                // Create email object
-                const email = {
-                    id: generateId(),
-                    to,
-                    from: parsed.from?.text || 'Unknown',
-                    subject: parsed.subject || '(No subject)',
-                    text: parsed.text || '',
-                    html: parsed.html || '',
-                    date: new Date().toISOString(),
-                    read: false,
-                    deleted: false,
-                    attachments: (parsed.attachments || []).map(att => ({
-                        filename: att.filename || 'attachment',
-                        contentType: att.contentType || 'application/octet-stream',
-                        size: att.size || 0,
-                        content: att.content?.toString('base64') || ''
-                    }))
-                };
+                const attachments = (parsed.attachments || []).map(att => ({
+                    filename: att.filename || 'attachment',
+                    contentType: att.contentType || 'application/octet-stream',
+                    size: att.size || 0,
+                    content: att.content?.toString('base64') || ''
+                }));
 
-                // Ensure inbox exists
-                ensureInbox(to);
+                for (const to of recipients) {
+                    console.log(`📧 Email received for: ${to}`);
+                    console.log(`   From: ${parsed.from?.text}`);
+                    console.log(`   Subject: ${parsed.subject}`);
 
-                // Store to database
-                storeEmail(email);
-                console.log(`   ✓ Stored to database`);
+                    // Create email object
+                    const email = {
+                        id: generateId(),
+                        to,
+                        from: parsed.from?.text || 'Unknown',
+                        subject: parsed.subject || '(No subject)',
+                        text: parsed.text || '',
+                        html: parsed.html || '',
+                        date: parsedDate.toISOString(),
+                        read: false,
+                        deleted: false,
+                        attachments
+                    };
 
-                // Sync to Next.js API for real-time updates
-                await sendToNextJS(email);
+                    // Ensure inbox exists
+                    ensureInbox(to);
+
+                    // Store to database
+                    storeEmail(email);
+                    console.log(`   ✓ Stored to database`);
+
+                    // Sync to Next.js API for real-time updates
+                    await sendToNextJS(email);
+                }
 
             } catch (err) {
                 console.error('Error parsing email:', err);
@@ -234,7 +291,18 @@ const smtp = new SMTPServer({
         callback();
     },
     onRcptTo(address, session, callback) {
+        const recipient = (address.address || '').toLowerCase();
+        const domain = recipient.split('@')[1] || '';
         console.log(`   Rcpt to: ${address.address}`);
+
+        // Only accept mail for domains we actually serve
+        if (!ALLOWED_DOMAINS.includes(domain)) {
+            console.log(`   ✖ Rejected: domain not served here (${domain})`);
+            const err = new Error(`Domain not served here: ${domain}`);
+            err.responseCode = 550;
+            return callback(err);
+        }
+
         callback();
     }
 });
@@ -329,6 +397,8 @@ smtp.listen(SMTP_PORT, '0.0.0.0', () => {
     console.log(`📧 SMTP listening on port ${SMTP_PORT}`);
     console.log(`🌐 HTTP API on port ${HTTP_PORT}`);
     console.log(`📍 Mail domain: ${MAIL_DOMAIN}`);
+    console.log(`📬 Accepted recipient domains: ${ALLOWED_DOMAINS.join(', ')}`);
+    console.log(`📦 Max message size: ${(MAX_MESSAGE_SIZE / 1024 / 1024).toFixed(1)} MB`);
     console.log(`🗄️  Database: ${DB_PATH}`);
     console.log(`🔗 Next.js API: ${NEXTJS_API}`);
     console.log('==========================================');

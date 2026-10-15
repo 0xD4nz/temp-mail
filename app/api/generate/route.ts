@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { generateRandomString, registerAddress, isUsernameAvailable, getAvailableDomains, AVAILABLE_DOMAINS } from '@/lib/emailStore';
+import { generateRandomString, tryRegisterAddress, isUsernameAvailable, getAvailableDomains, AVAILABLE_DOMAINS, Inbox } from '@/lib/emailStore';
 
 export async function POST(request: Request) {
     try {
@@ -11,8 +11,9 @@ export async function POST(request: Request) {
             ? domain
             : AVAILABLE_DOMAINS[0];
 
-        let username: string;
+        let inbox: Inbox | null = null;
         let isCustom = false;
+        let email = '';
 
         if (customUsername) {
             // Validate custom username
@@ -32,25 +33,35 @@ export async function POST(request: Request) {
                 );
             }
 
-            // Check availability
-            if (!isUsernameAvailable(sanitized, selectedDomain)) {
+            email = `${sanitized}@${selectedDomain}`;
+            isCustom = true;
+
+            // Atomic create-or-fail: a concurrent request for the same name
+            // gets a clean 409 instead of silently overwriting the inbox.
+            inbox = tryRegisterAddress(email, true, selectedDomain);
+            if (!inbox) {
                 return NextResponse.json(
                     { success: false, error: 'Username is already taken' },
                     { status: 409 }
                 );
             }
-
-            username = sanitized;
-            isCustom = true;
         } else {
-            // Generate random username
-            username = generateRandomString(10);
+            // Generate a random username, retrying on (extremely unlikely) collision.
+            // tryRegisterAddress is atomic, so a collision can never hijack
+            // someone else's active inbox.
+            for (let attempt = 0; attempt < 10 && !inbox; attempt++) {
+                const username = generateRandomString(10);
+                email = `${username}@${selectedDomain}`;
+                inbox = tryRegisterAddress(email, false, selectedDomain);
+            }
+
+            if (!inbox) {
+                return NextResponse.json(
+                    { success: false, error: 'Failed to generate a unique address, please try again' },
+                    { status: 500 }
+                );
+            }
         }
-
-        const email = `${username}@${selectedDomain}`;
-
-        // Register the address
-        const inbox = registerAddress(email, isCustom, selectedDomain);
 
         return NextResponse.json({
             success: true,
@@ -93,7 +104,10 @@ export async function GET(request: Request) {
             );
         }
 
-        const domain = searchParams.get('domain') || AVAILABLE_DOMAINS[0];
+        const domainParam = searchParams.get('domain');
+        const domain = domainParam && AVAILABLE_DOMAINS.includes(domainParam)
+            ? domainParam
+            : AVAILABLE_DOMAINS[0];
         const sanitized = username.toLowerCase().replace(/[^a-z0-9._-]/g, '');
         const available = isUsernameAvailable(sanitized, domain);
 

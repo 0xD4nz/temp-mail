@@ -32,16 +32,26 @@ export function formatDate(date: Date): string {
 }
 
 // Sanitize HTML to prevent XSS (basic implementation)
+// NOTE: rendered inside a sandboxed opaque-origin iframe as a second layer.
 export function sanitizeHtml(html: string): string {
     // Remove script tags
     let sanitized = html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+
+    // Remove nested browsing contexts (iframes can load data: URLs with JS)
+    sanitized = sanitized.replace(/<(iframe|frame|frameset|object|embed)\b[^>]*>([\s\S]*?)<\/\1>/gi, '');
+    sanitized = sanitized.replace(/<(iframe|frame|object|embed)\b[^>]*\/?>/gi, '');
+
+    // Remove form elements (phishing risk in a mail viewer)
+    sanitized = sanitized.replace(/<(form|input|button|select|textarea)\b[^>]*>([\s\S]*?)<\/\1>/gi, '');
+    sanitized = sanitized.replace(/<(input|button)\b[^>]*\/?>/gi, '');
 
     // Remove event handlers
     sanitized = sanitized.replace(/\s*on\w+\s*=\s*["'][^"']*["']/gi, '');
     sanitized = sanitized.replace(/\s*on\w+\s*=\s*[^\s>]+/gi, '');
 
-    // Remove javascript: URLs
+    // Remove javascript: and data:text/html URLs
     sanitized = sanitized.replace(/javascript:/gi, '');
+    sanitized = sanitized.replace(/data:text\/html/gi, 'data:text/plain');
 
     return sanitized;
 }
