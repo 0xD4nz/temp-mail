@@ -676,6 +676,7 @@ body::after {
   gap: 14px;
   padding: 14px 20px;
   border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
   cursor: pointer;
   transition: all var(--transition-fast);
 }
@@ -761,6 +762,10 @@ body::after {
   margin-top: 6px;
 }
 
+.emailItemMeta:empty {
+  display: none;
+}
+
 .attachmentBadge {
   display: flex;
   align-items: center;
@@ -817,7 +822,6 @@ body::after {
   max-width: 260px;
 }
 
-/* Email Viewer Panel */
 /* Email Viewer Panel */
 .viewerPanel {
   background: var(--bg-card);
@@ -951,6 +955,103 @@ body::after {
   font-size: 0.75rem;
 }
 
+/* Verification code banner */
+.codeBanner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 16px 16px 0;
+  padding: 14px 18px;
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.16), rgba(99, 102, 241, 0.07));
+  border: 1px solid rgba(124, 58, 237, 0.45);
+  border-radius: var(--radius-lg);
+  flex-shrink: 0;
+}
+
+.codeBannerIcon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--primary-light);
+  border: 1px solid rgba(124, 58, 237, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.codeBannerIcon svg {
+  width: 20px;
+  height: 20px;
+  color: var(--primary);
+}
+
+.codeBannerInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.codeBannerLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-secondary);
+}
+
+.codeBannerCode {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: var(--text-primary);
+  line-height: 1.2;
+}
+
+/* Compact code chip in the email list */
+.codeChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--primary);
+  background: var(--primary-light);
+  border: 1px solid rgba(124, 58, 237, 0.35);
+  padding: 3px 10px;
+  border-radius: 100px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.codeChip:hover {
+  background: rgba(124, 58, 237, 0.22);
+  border-color: var(--primary);
+}
+
+.codeChip svg {
+  width: 12px;
+  height: 12px;
+}
+
+@media (max-width: 768px) {
+  .codeBanner {
+    margin: 12px 12px 0;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .codeBannerCode {
+    font-size: 1.3rem;
+    letter-spacing: 4px;
+  }
+}
+
 /* Email Content - Enhanced */
 .emailContentContainer {
   background: #ffffff;
@@ -1054,6 +1155,31 @@ body::after {
   height: 16px;
 }
 
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none;
+}
+
+/* Visible keyboard focus */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Respect users who prefer reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 .btnPrimary {
   background: var(--gradient-primary);
   color: white;
@@ -1145,7 +1271,6 @@ body::after {
 }
 
 /* Large Email Modal - Auto-fit Content for PC & Mobile */
-/* Large Email Modal - Auto-fit Content for PC & Mobile */
 .modal.emailModal {
   max-width: 1400px;
   max-height: 96vh;
@@ -1176,11 +1301,12 @@ body::after {
   overflow: visible;
 }
 
-.modal.emailModal .viewerContent.htmlMode {
+.modal.emailModal .viewerContent {
   padding: 0;
   overflow-y: auto;
   /* Scrollable content area */
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -1206,12 +1332,6 @@ body::after {
   border-bottom: 1px solid var(--border);
   padding: 16px 20px;
   flex-shrink: 0;
-}
-
-.modal.emailModal .viewerContent {
-  flex: 0 0 auto;
-  overflow: visible;
-  padding: 20px;
 }
 
 .modal.emailModal .emailIframe {
@@ -1321,9 +1441,12 @@ body::after {
   width: 48px;
   height: 26px;
   background: var(--border);
+  border: none;
+  padding: 0;
   border-radius: 13px;
   cursor: pointer;
   transition: background var(--transition-fast);
+  flex-shrink: 0;
 }
 
 .toggleControl.active {
@@ -1374,12 +1497,26 @@ body::after {
 }
 
 /* Toast Notification */
-.toast {
+.toastContainer {
   position: fixed;
   bottom: 24px;
   right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 1100;
+  max-width: min(360px, calc(100vw - 48px));
+  pointer-events: none;
+}
+
+.toastContainer .toast {
+  pointer-events: auto;
+}
+
+.toast {
   background: var(--bg-card);
   backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   padding: 14px 18px;
@@ -1388,8 +1525,20 @@ body::after {
   gap: 10px;
   box-shadow: var(--shadow-lg);
   animation: slideIn 0.3s ease;
-  z-index: 1000;
   max-width: 360px;
+}
+
+@media (max-width: 768px) {
+  .toastContainer {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    max-width: none;
+  }
+
+  .toastContainer .toast {
+    max-width: none;
+  }
 }
 
 .toast.success {
@@ -1547,14 +1696,6 @@ body::after {
     gap: 16px;
   }
 
-  .statItem {
-    gap: 6px;
-  }
-
-  .statItem span:last-child {
-    font-size: 0.8rem;
-  }
-
   .emailCard {
     padding: 16px;
   }
@@ -1588,7 +1729,6 @@ body::after {
   .emailAddress {
     font-size: 0.9rem;
     text-align: center;
-    word-break: break-all;
   }
 
   .emailActions {
@@ -1605,14 +1745,8 @@ body::after {
   }
 
   .inboxPanel {
-    max-height: none;
     min-height: 350px;
     max-height: 450px;
-  }
-
-  .viewerPanel {
-    max-height: none;
-    min-height: 350px;
   }
 
   .inboxHeader {
@@ -1657,10 +1791,9 @@ body::after {
     font-size: 0.8rem;
   }
 
-  /* Viewer panel on mobile - Fix scroll */
+  /* Viewer panel on mobile - restrict height to enable scroll */
   .viewerPanel {
     max-height: 60vh;
-    /* Restrict height to enable scroll */
     min-height: 200px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;

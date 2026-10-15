@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Mail,
   Copy,
@@ -27,12 +27,13 @@ import {
   Archive,
   Eye,
   EyeOff,
-  ChevronDown,
   Globe,
   Maximize2,
-  Minimize2
+  Minimize2,
+  KeyRound
 } from 'lucide-react';
 import { formatDate, extractName, getInitials, stringToColor, truncate, copyToClipboard, sanitizeHtml } from '@/lib/utils';
+import { extractVerificationCode } from '@/lib/otp';
 
 interface Attachment {
   filename: string;
@@ -166,6 +167,71 @@ const EmailContent = ({ html, text }: { html?: string; text?: string }) => {
     <pre style={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit', padding: '24px' }}>
       {text || ''}
     </pre>
+  );
+};
+
+// Prominent verification-code banner shown above the email body when an OTP
+// is detected in the subject / text / HTML
+const VerificationCodeBanner = ({ email }: { email: Email }) => {
+  const detected = useMemo(
+    () => extractVerificationCode(email.subject, email.text, email.html),
+    [email]
+  );
+  const [copiedCode, setCopiedCode] = useState(false);
+
+  if (!detected) return null;
+
+  const handleCopyCode = async () => {
+    const ok = await copyToClipboard(detected.code);
+    if (ok) {
+      setCopiedCode(true);
+      setTimeout(() => setCopiedCode(false), 2000);
+    }
+  };
+
+  return (
+    <div className="codeBanner">
+      <div className="codeBannerIcon">
+        <KeyRound />
+      </div>
+      <div className="codeBannerInfo">
+        <span className="codeBannerLabel">Verification code detected</span>
+        <span className="codeBannerCode">{detected.code}</span>
+      </div>
+      <button
+        type="button"
+        className={`btn btnSmall ${copiedCode ? 'btnSuccess' : 'btnSecondary'}`}
+        onClick={handleCopyCode}
+      >
+        {copiedCode ? <Check /> : <Copy />}
+        {copiedCode ? 'Copied!' : 'Copy'}
+      </button>
+    </div>
+  );
+};
+
+// Compact code chip inside the email list - click copies without opening the email
+const EmailCodeChip = ({ email }: { email: Email }) => {
+  const detected = useMemo(
+    () => extractVerificationCode(email.subject, email.text, email.html),
+    [email]
+  );
+
+  if (!detected) return null;
+
+  return (
+    <button
+      type="button"
+      className="codeChip"
+      title="Copy verification code"
+      onClick={async (e) => {
+        e.stopPropagation();
+        await copyToClipboard(detected.code);
+      }}
+    >
+      <KeyRound />
+      {detected.code}
+    </button>
   );
 };
 
@@ -823,8 +889,8 @@ export default function Home() {
 
             {qrCode && (
               <div className="qrCodeBox">
-                <img src={qrCode} alt="QR Code" />
-                <span>Scan to copy</span>
+                <img src={qrCode} alt="QR code for email address" width={116} height={116} />
+                <span>Scan to compose</span>
               </div>
             )}
           </div>
@@ -957,14 +1023,15 @@ export default function Home() {
                       <div className="emailItemPreview">
                         {truncate(emailItem.text || '', 40)}
                       </div>
-                      {emailItem.attachments && emailItem.attachments.length > 0 && (
-                        <div className="emailItemMeta">
+                      <div className="emailItemMeta">
+                        {emailItem.attachments && emailItem.attachments.length > 0 && (
                           <span className="attachmentBadge">
                             <Paperclip />
                             {emailItem.attachments.length}
                           </span>
-                        </div>
-                      )}
+                        )}
+                        <EmailCodeChip email={emailItem} />
+                      </div>
                     </div>
                   </div>
                 ))
@@ -1039,6 +1106,9 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
+
+                {/* Verification code banner (auto-detected OTP) */}
+                <VerificationCodeBanner email={selectedEmail} />
 
                 {/* Attachments */}
                 {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
@@ -1130,6 +1200,9 @@ export default function Home() {
                 </div>
               </div>
             </div>
+
+            {/* Verification code banner (auto-detected OTP) */}
+            <VerificationCodeBanner email={selectedEmail} />
 
             {/* Attachments in Modal */}
             {selectedEmail.attachments && selectedEmail.attachments.length > 0 && (
@@ -1290,8 +1363,12 @@ export default function Home() {
                   Appearance
                 </h3>
                 <div className="toggleSwitch">
-                  <span className="toggleLabel">Dark Theme</span>
-                  <div
+                  <span className="toggleLabel" id="theme-toggle-label">Dark Theme</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={theme === 'dark'}
+                    aria-labelledby="theme-toggle-label"
                     className={`toggleControl ${theme === 'dark' ? 'active' : ''}`}
                     onClick={toggleTheme}
                   />
@@ -1304,8 +1381,12 @@ export default function Home() {
                   Notifications
                 </h3>
                 <div className="toggleSwitch">
-                  <span className="toggleLabel">Browser Notifications</span>
-                  <div
+                  <span className="toggleLabel" id="notif-toggle-label">Browser Notifications</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={notificationsEnabled}
+                    aria-labelledby="notif-toggle-label"
                     className={`toggleControl ${notificationsEnabled ? 'active' : ''}`}
                     onClick={toggleNotifications}
                   />
