@@ -272,7 +272,15 @@ echo ""
 read -p "Do you want to setup SSL now? (y/n): " SETUP_SSL
 
 if [ "$SETUP_SSL" = "y" ] || [ "$SETUP_SSL" = "Y" ]; then
-    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN --expand --non-interactive --agree-tos -m $ADMIN_EMAIL || print_warning "SSL setup failed - you can run 'sudo certbot --nginx' manually later"
+    # Only include www if it actually resolves - otherwise certbot fails the entire request
+    CERT_DOMAINS="-d $DOMAIN"
+    if getent hosts "www.$DOMAIN" > /dev/null 2>&1; then
+        CERT_DOMAINS="$CERT_DOMAINS -d www.$DOMAIN"
+    else
+        print_warning "www.$DOMAIN does not resolve - requesting certificate for $DOMAIN only"
+    fi
+    # shellcheck disable=SC2086
+    sudo certbot --nginx $CERT_DOMAINS --expand --non-interactive --agree-tos -m $ADMIN_EMAIL || print_warning "SSL setup failed - you can run 'sudo certbot --nginx' manually later"
 else
     print_warning "Skipping SSL setup. Run 'sudo certbot --nginx' later to enable HTTPS"
 fi
