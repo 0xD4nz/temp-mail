@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
-import { generateRandomString, tryRegisterAddress, isUsernameAvailable, getAvailableDomains, AVAILABLE_DOMAINS, Inbox } from '@/lib/emailStore';
+import { generateRandomString, tryRegisterAddress, isUsernameAvailable, getAvailableDomains, Inbox } from '@/lib/emailStore';
 
 export async function POST(request: Request) {
     try {
         const body = await request.json().catch(() => ({}));
         const { customUsername, domain } = body;
 
-        // Validate domain
-        const selectedDomain = domain && AVAILABLE_DOMAINS.includes(domain)
+        // Validate domain against the admin-managed domain list (DB-backed)
+        const domains = getAvailableDomains();
+        const selectedDomain = domain && domains.includes(domain)
             ? domain
-            : AVAILABLE_DOMAINS[0];
+            : domains[0];
 
         let inbox: Inbox | null = null;
         let isCustom = false;
@@ -105,9 +106,10 @@ export async function GET(request: Request) {
         }
 
         const domainParam = searchParams.get('domain');
-        const domain = domainParam && AVAILABLE_DOMAINS.includes(domainParam)
+        const domains = getAvailableDomains();
+        const domain = domainParam && domains.includes(domainParam)
             ? domainParam
-            : AVAILABLE_DOMAINS[0];
+            : domains[0];
         const sanitized = username.toLowerCase().replace(/[^a-z0-9._-]/g, '');
         const available = isUsernameAvailable(sanitized, domain);
 

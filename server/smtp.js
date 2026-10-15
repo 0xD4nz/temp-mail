@@ -21,11 +21,28 @@ const NEXTJS_API = process.env.NEXTJS_API || 'http://localhost:3000';
 const MAX_MESSAGE_SIZE = parseInt(process.env.MAX_MESSAGE_SIZE || String(10 * 1024 * 1024), 10);
 
 // Domains this server accepts mail for - anything else is rejected with 550.
-// Comma-separated list; falls back to MAIL_DOMAIN for backward compatibility.
-const ALLOWED_DOMAINS = (process.env.MAIL_DOMAINS || MAIL_DOMAIN)
+// Static env fallback, used when the domains table is missing or empty.
+const ENV_ALLOWED_DOMAINS = (process.env.MAIL_DOMAINS || MAIL_DOMAIN)
     .split(',')
     .map(d => d.trim().toLowerCase())
     .filter(d => d.length > 0);
+
+// Read accepted domains from the shared SQLite domains table (managed via the
+// admin panel). Falls back to env when the table is missing/empty. Called per
+// recipient validation - cheap, the domain list is tiny.
+function getAllowedDomains() {
+    try {
+        const rows = db.prepare(
+            'SELECT domain FROM domains ORDER BY is_primary DESC, domain ASC'
+        ).all();
+        if (rows && rows.length > 0) {
+            return rows.map(r => String(r.domain).toLowerCase());
+        }
+    } catch (err) {
+        // Table missing (web app hasn't created it yet) - use env fallback
+    }
+    return ENV_ALLOWED_DOMAINS;
+}
 
 // Shared secret for the SMTP -> Next.js sync endpoint (/api/emails POST).
 // When set, the Next.js route requires the matching x-internal-secret header.
@@ -92,6 +109,16 @@ db.exec(`
     );
 
     CREATE INDEX IF NOT EXISTS idx_emails_inbox ON emails(inbox_address);
+`);
+
+// Domains table is primarily managed by the web app (admin panel); create it
+// here too so the SMTP server never fails on a missing table.
+db.exec(`
+    CREATE TABLE IF NOT EXISTS domains (
+        domain TEXT PRIMARY KEY,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+    );
 `);
 
 function generateId() {
@@ -296,7 +323,7 @@ const smtp = new SMTPServer({
         console.log(`   Rcpt to: ${address.address}`);
 
         // Only accept mail for domains we actually serve
-        if (!ALLOWED_DOMAINS.includes(domain)) {
+        if (!getAllowedDomains().includes(domain)) {
             console.log(`   ✖ Rejected: domain not served here (${domain})`);
             const err = new Error(`Domain not served here: ${domain}`);
             err.responseCode = 550;
@@ -397,7 +424,7 @@ smtp.listen(SMTP_PORT, '0.0.0.0', () => {
     console.log(`📧 SMTP listening on port ${SMTP_PORT}`);
     console.log(`🌐 HTTP API on port ${HTTP_PORT}`);
     console.log(`📍 Mail domain: ${MAIL_DOMAIN}`);
-    console.log(`📬 Accepted recipient domains: ${ALLOWED_DOMAINS.join(', ')}`);
+    console.log(`📬 Accepted recipient domains: ${getAllowedDomains().join(', ')}`);
     console.log(`📦 Max message size: ${(MAX_MESSAGE_SIZE / 1024 / 1024).toFixed(1)} MB`);
     console.log(`🗄️  Database: ${DB_PATH}`);
     console.log(`🔗 Next.js API: ${NEXTJS_API}`);

@@ -48,6 +48,20 @@ if [ -z "$ADMIN_EMAIL" ]; then
     print_warning "Using default email: $ADMIN_EMAIL"
 fi
 
+echo ""
+echo -e "${CYAN}Admin password for the /admin panel (empty = auto-generate):${NC}"
+read -s -p "Admin password: " ADMIN_PASSWORD
+echo ""
+if [ -z "$ADMIN_PASSWORD" ]; then
+    ADMIN_PASSWORD=$(openssl rand -hex 16)
+    echo ""
+    echo -e "${YELLOW}============================================${NC}"
+    echo -e "${YELLOW}  Generated admin password: ${GREEN}$ADMIN_PASSWORD${NC}"
+    echo -e "${YELLOW}  SAVE THIS - it is shown only once!${NC}"
+    echo -e "${YELLOW}============================================${NC}"
+    echo ""
+fi
+
 # Configuration
 MAIL_DOMAIN="$DOMAIN"
 APP_DIR="/opt/temp-mail"
@@ -145,6 +159,8 @@ NODE_ENV=production
 NEXT_PUBLIC_MAIL_DOMAIN=$MAIL_DOMAIN
 INTERNAL_API_SECRET=$INTERNAL_API_SECRET
 EOF
+# Append ADMIN_PASSWORD via printf so special characters ($, `, !, quotes) survive intact
+printf 'ADMIN_PASSWORD=%s\n' "$ADMIN_PASSWORD" >> $APP_DIR/.env.local
 print_status "Environment file created"
 print_warning "INTERNAL_API_SECRET generated and saved to .env.local (also injected into PM2 below)"
 
@@ -157,6 +173,9 @@ print_status "Application built"
 # Step 10: Configure PM2
 echo ""
 echo "🔧 Step 10: Configuring PM2..."
+# Escape backslashes and single quotes so any password stays valid inside JS single-quoted strings
+ADMIN_PASSWORD_JS=${ADMIN_PASSWORD//\\/\\\\}
+ADMIN_PASSWORD_JS=${ADMIN_PASSWORD_JS//\'/\\\'}
 cat > $APP_DIR/ecosystem.config.js << EOF
 module.exports = {
   apps: [
@@ -171,7 +190,8 @@ module.exports = {
         MAIL_DOMAIN: '$MAIL_DOMAIN',
         MAIL_DOMAINS: '$MAIL_DOMAIN,mail.$MAIL_DOMAIN,inbox.$MAIL_DOMAIN,temp.$MAIL_DOMAIN,box.$MAIL_DOMAIN',
         NEXT_PUBLIC_MAIL_DOMAIN: '$MAIL_DOMAIN',
-        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET'
+        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET',
+        ADMIN_PASSWORD: '$ADMIN_PASSWORD_JS'
       },
       instances: 1,
       autorestart: true,
@@ -190,7 +210,8 @@ module.exports = {
         SMTP_PORT: '25',
         HTTP_PORT: '3001',
         MAX_MESSAGE_SIZE: '10485760',
-        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET'
+        INTERNAL_API_SECRET: '$INTERNAL_API_SECRET',
+        ADMIN_PASSWORD: '$ADMIN_PASSWORD_JS'
       },
       instances: 1,
       autorestart: true,

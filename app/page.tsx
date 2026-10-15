@@ -257,7 +257,7 @@ export default function Home() {
   const [showEmailModal, setShowEmailModal] = useState(false);
 
   // Settings & Modals
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [theme, setTheme] = useState<'dark' | 'light'>('light');
   const [notificationsEnabled, setNotificationsEnabled] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showNewInboxModal, setShowNewInboxModal] = useState(false);
@@ -1320,7 +1320,7 @@ export default function Home() {
               <p style={{ color: 'var(--text-secondary)' }}>
                 Are you sure you want to delete <strong>{activeInbox}</strong>?
               </p>
-              <p style={{ color: 'var(--danger)', marginTop: '12px', fontSize: '0.9rem' }}>
+              <p style={{ color: 'var(--danger)', marginTop: '12px', fontSize: '0.9rem', fontWeight: 700 }}>
                 This will permanently delete the inbox and all associated emails. This action cannot be undone.
               </p>
             </div>
@@ -1400,7 +1400,7 @@ export default function Home() {
                 </h3>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '8px' }}>
                   {availableDomains.map(domain => (
-                    <span key={domain} className="badge" style={{ background: 'var(--primary-light)', color: 'var(--primary)' }}>
+                    <span key={domain} className="badge">
                       {domain}
                     </span>
                   ))}

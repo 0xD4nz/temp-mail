@@ -80,6 +80,12 @@ db.exec(`
     CREATE INDEX IF NOT EXISTS idx_emails_inbox ON emails(inbox_address);
     CREATE INDEX IF NOT EXISTS idx_emails_deleted ON emails(deleted);
     CREATE INDEX IF NOT EXISTS idx_inboxes_expires ON inboxes(expires_at);
+
+    CREATE TABLE IF NOT EXISTS domains (
+        domain TEXT PRIMARY KEY,
+        is_primary INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+    );
 `);
 
 // Available domains
@@ -89,8 +95,168 @@ export const AVAILABLE_DOMAINS = (process.env.MAIL_DOMAINS || DEFAULT_DOMAIN)
     .map(d => d.trim())
     .filter(d => d.length > 0);
 
+// Lowercased, deduplicated env domains - used to seed the domains table on first run
+function envDomains(): string[] {
+    return [...new Set(
+        (process.env.MAIL_DOMAINS || DEFAULT_DOMAIN)
+            .split(',')
+            .map(d => d.trim().toLowerCase())
+            .filter(d => d.length > 0)
+    )];
+}
+
+// Seed the domains table from env on first run (first domain = primary)
+try {
+    const count = (db.prepare('SELECT COUNT(*) as c FROM domains').get() as { c: number }).c;
+    if (count === 0) {
+        const seeds = envDomains();
+        const now = Date.now();
+        const insert = db.prepare('INSERT OR IGNORE INTO domains (domain, is_primary, created_at) VALUES (?, ?, ?)');
+        seeds.forEach((d, i) => insert.run(d, i === 0 ? 1 : 0, now));
+    }
+} catch {
+    // Table was just created or DB is read-only in this context - env fallback still works
+}
+
 export function getAvailableDomains(): string[] {
+    try {
+        const rows = db.prepare(
+            'SELECT domain FROM domains ORDER BY is_primary DESC, domain ASC'
+        ).all() as { domain: string }[];
+        if (rows.length > 0) {
+            return rows.map(r => r.domain);
+        }
+    } catch {
+        // fall through to env
+    }
     return [...AVAILABLE_DOMAINS];
+}
+
+// ============ DOMAIN MANAGEMENT (admin) ============
+
+export interface DomainInfo {
+    domain: string;
+    isPrimary: boolean;
+}
+
+const DOMAIN_REGEX = /^[a-z0-9.-]+\.[a-z]{2,}$/;
+
+export function getAllDomains(): DomainInfo[] {
+    try {
+        const rows = db.prepare(
+            'SELECT domain, is_primary as isPrimary FROM domains ORDER BY is_primary DESC, domain ASC'
+        ).all() as any[];
+        if (rows.length > 0) {
+            return rows.map(r => ({ domain: r.domain, isPrimary: Boolean(r.isPrimary) }));
+        }
+    } catch {
+        // fall through to env
+    }
+    return envDomains().map((d, i) => ({ domain: d, isPrimary: i === 0 }));
+}
+
+export function addDomain(domain: string): void {
+    const d = domain.trim().toLowerCase();
+    if (!DOMAIN_REGEX.test(d)) {
+        throw new Error('invalid_domain');
+    }
+    const existing = db.prepare('SELECT domain FROM domains WHERE domain = ?').get(d);
+    if (existing) {
+        throw new Error('domain_exists');
+    }
+    db.prepare('INSERT INTO domains (domain, is_primary, created_at) VALUES (?, ?, ?)')
+        .run(d, 0, Date.now());
+}
+
+export function removeDomain(domain: string): void {
+    const d = domain.trim().toLowerCase();
+    const rows = getAllDomains();
+    if (rows.length <= 1) {
+        throw new Error('cannot_remove_last_domain');
+    }
+    const target = rows.find(r => r.domain === d);
+    if (!target) {
+        throw new Error('domain_not_found');
+    }
+    const wasPrimary = target.isPrimary;
+    db.prepare('DELETE FROM domains WHERE domain = ?').run(d);
+    if (wasPrimary) {
+        // Promote the alphabetically-first remaining domain to primary
+        const next = db.prepare('SELECT domain FROM domains ORDER BY domain ASC LIMIT 1')
+            .get() as { domain: string } | undefined;
+        if (next) {
+            db.prepare('UPDATE domains SET is_primary = 1 WHERE domain = ?').run(next.domain);
+        }
+    }
+}
+
+// ============ ADMIN STATS & INBOX MANAGEMENT ============
+
+export interface AdminStats {
+    inboxes: number;
+    emails: number;
+    emailsToday: number;
+    dbSizeBytes: number;
+}
+
+export function getAdminStats(): AdminStats {
+    const inboxes = (db.prepare('SELECT COUNT(*) as c FROM inboxes').get() as any).c;
+    const emails = (db.prepare('SELECT COUNT(*) as c FROM emails').get() as any).c;
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const emailsToday = (db.prepare('SELECT COUNT(*) as c FROM emails WHERE date >= ?')
+        .get(startOfDay.getTime()) as any).c;
+    let dbSizeBytes = 0;
+    try {
+        dbSizeBytes = fs.statSync(DB_PATH).size;
+    } catch {
+        // ignore
+    }
+    return { inboxes, emails, emailsToday, dbSizeBytes };
+}
+
+export interface AdminInboxRow {
+    address: string;
+    domain: string;
+    createdAt: number;
+    expiresAt: number;
+    emailCount: number;
+}
+
+export function listInboxesAdmin(search: string, limit: number): AdminInboxRow[] {
+    const lim = Math.min(Math.max(Math.floor(limit) || 50, 1), 200);
+    const term = (search || '').trim().toLowerCase();
+    const base = `
+        SELECT i.address, i.domain, i.created_at as createdAt, i.expires_at as expiresAt,
+               (SELECT COUNT(*) FROM emails e WHERE e.inbox_address = i.address) as emailCount
+        FROM inboxes i`;
+    let rows: any[];
+    if (term) {
+        // Escape LIKE wildcards so a literal % or _ can't act as one
+        const escaped = term.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+        rows = db.prepare(`${base} WHERE i.address LIKE ? ESCAPE '\\' ORDER BY i.created_at DESC LIMIT ?`)
+            .all(`%${escaped}%`, lim) as any[];
+    } else {
+        rows = db.prepare(`${base} ORDER BY i.created_at DESC LIMIT ?`).all(lim) as any[];
+    }
+    return rows.map(r => ({
+        address: r.address,
+        domain: r.domain,
+        createdAt: r.createdAt,
+        expiresAt: r.expiresAt,
+        emailCount: r.emailCount
+    }));
+}
+
+// Deletes an inbox and all its emails. Returns true if the inbox existed.
+export function deleteInboxAdmin(address: string): boolean {
+    const addr = address.trim().toLowerCase();
+    const tx = db.transaction(() => {
+        db.prepare('DELETE FROM emails WHERE inbox_address = ?').run(addr);
+        const result = db.prepare('DELETE FROM inboxes WHERE address = ?').run(addr);
+        return result.changes > 0;
+    });
+    return tx();
 }
 
 // Stats
