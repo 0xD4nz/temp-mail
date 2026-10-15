@@ -232,16 +232,24 @@ sudo nginx -t
 sudo systemctl reload nginx
 print_status "Nginx configured"
 
-# Step 12: Configure Firewall
+# Step 12: Configure Firewall (optional - skipped gracefully if ufw is unavailable)
 echo ""
 echo "🔥 Step 12: Configuring firewall..."
-sudo ufw allow 22/tcp    # SSH
-sudo ufw allow 80/tcp    # HTTP
-sudo ufw allow 443/tcp   # HTTPS
-sudo ufw allow 25/tcp    # SMTP
-sudo ufw allow 587/tcp   # SMTP Submission
-sudo ufw --force enable
-print_status "Firewall configured"
+if ! command -v ufw &> /dev/null; then
+    print_warning "ufw not found, trying to install..."
+    sudo apt install -y ufw || print_warning "Could not install ufw"
+fi
+if command -v ufw &> /dev/null; then
+    sudo ufw allow 22/tcp    # SSH
+    sudo ufw allow 80/tcp    # HTTP
+    sudo ufw allow 443/tcp   # HTTPS
+    sudo ufw allow 25/tcp    # SMTP
+    sudo ufw allow 587/tcp   # SMTP Submission
+    sudo ufw --force enable
+    print_status "Firewall configured"
+else
+    print_warning "Skipping firewall: ufw unavailable (ensure ports 22/80/443/25/587 are open)"
+fi
 
 # Step 13: Start applications with PM2
 echo ""
